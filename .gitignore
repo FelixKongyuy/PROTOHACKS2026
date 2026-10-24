@@ -1,0 +1,23 @@
+# CircuitPython firmware (large binary, re-downloadable from circuitpython.org)
+*.uf2
+
+# Library bundle downloads (copied to CIRCUITPY/lib, not tracked here)
+adafruit-circuitpython-bundle-*/
+*.zip
+
+# PyCharm
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local AI assistant notes
+CLAUDE.md

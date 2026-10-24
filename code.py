@@ -36,7 +36,7 @@
 # ----------------------------------------
 
 import time
-import boa$p = New-Object System.IO.Ports.SerialPort COM7,115200; $p.DtrEnable = $true; $p.Open(); try { while ($true) { $p.ReadLine() } } finally { $p.Close() }$p = New-Object System.IO.Ports.SerialPort COM7,115200; $p.DtrEnable = $true; $p.Open(); try { while ($true) { $p.ReadLine() } } finally { $p.Close() }rd
+import board
 import pwmio
 import rotaryio
 import usb_midi
@@ -59,8 +59,8 @@ NUM_EFFECTS = 26                 # effects in rekordbox's FX1 list
 COLOR_BALANCE = (1.0, 0.6, 1.0)  # (R, G, B) dims green so blues don't look green
 FLASH_TIME = 0.4                 # seconds the LED shows the new color after a click
 
-MIN_CM = 5        # hand this close (or closer) = value 0
-MAX_CM = 30       # hand this high = value 127; higher = "no hand"
+MIN_CM = 5        # hand this close (or closer) = value 127 (full effect)
+MAX_CM = 30       # hand this high = value 0; higher = "no hand"
                   # (kept below ~35 so nearby people/screens don't count as a hand)
 SMOOTHING = 0.6   # 0 = jumpy, closer to 1 = smoother but slower
 IDLE_BRIGHTNESS = 0      # LED brightness when the effect is off (0 = off)
@@ -171,8 +171,8 @@ while True:
             smoothed = distance
         smoothed = smoothed * SMOOTHING + distance * (1 - SMOOTHING)
 
-        # Hand higher = bigger value (sound "opens up")
-        value = int((smoothed - MIN_CM) / (MAX_CM - MIN_CM) * 127)
+        # Hand closer = bigger value (effect gets more intense)
+        value = int((MAX_CM - smoothed) / (MAX_CM - MIN_CM) * 127)
 
         if value != last_value:
             midi.send(ControlChange(DEPTH_CC, value))

@@ -36,7 +36,7 @@
 # ----------------------------------------
 
 import time
-import board
+import boa$p = New-Object System.IO.Ports.SerialPort COM7,115200; $p.DtrEnable = $true; $p.Open(); try { while ($true) { $p.ReadLine() } } finally { $p.Close() }$p = New-Object System.IO.Ports.SerialPort COM7,115200; $p.DtrEnable = $true; $p.Open(); try { while ($true) { $p.ReadLine() } } finally { $p.Close() }rd
 import pwmio
 import rotaryio
 import usb_midi
@@ -53,13 +53,17 @@ ON_OFF_NOTE = 60    # hand in/out  -> FX1 ON           (90 3C)
 NEXT_NOTE = 70      # dial right   -> FX1 Select Next  (90 46)
 PREV_NOTE = 71      # dial left    -> FX1 Select Prev  (90 47)
 
-COLOR = (0, 255, 255)   # LED color as (R, G, B) 0-255
+# LED: each effect gets its own color around the color wheel. Whatever effect
+# is selected at startup is red; each dial click moves one step around.
+NUM_EFFECTS = 26                 # effects in rekordbox's FX1 list
+COLOR_BALANCE = (1.0, 0.6, 1.0)  # (R, G, B) dims green so blues don't look green
+FLASH_TIME = 0.4                 # seconds the LED shows the new color after a click
 
 MIN_CM = 5        # hand this close (or closer) = value 0
 MAX_CM = 30       # hand this high = value 127; higher = "no hand"
                   # (kept below ~35 so nearby people/screens don't count as a hand)
 SMOOTHING = 0.6   # 0 = jumpy, closer to 1 = smoother but slower
-IDLE_BRIGHTNESS = 0.15   # LED brightness when no hand is present
+IDLE_BRIGHTNESS = 0      # LED brightness when the effect is off (0 = off)
 
 # Hand enters range = effect switches on, hand leaves = effect switches off.
 AUTO_ON_OFF = True
@@ -88,9 +92,26 @@ midi = adafruit_midi.MIDI(midi_out=usb_midi.ports[1], out_channel=0)
 def set_led(color, brightness):
     """Show a color at a brightness from 0.0 to 1.0."""
     r, g, b = color
-    red.duty_cycle = int(r / 255 * brightness * 65535)
-    green.duty_cycle = int(g / 255 * brightness * 65535)
-    blue.duty_cycle = int(b / 255 * brightness * 65535)
+    r_bal, g_bal, b_bal = COLOR_BALANCE
+    red.duty_cycle = int(r / 255 * r_bal * brightness * 65535)
+    green.duty_cycle = int(g / 255 * g_bal * brightness * 65535)
+    blue.duty_cycle = int(b / 255 * b_bal * brightness * 65535)
+
+
+def wheel_color(index):
+    """Color for effect number `index`, spread evenly around the color wheel."""
+    h = (index % NUM_EFFECTS) / NUM_EFFECTS * 6
+    section = int(h)
+    rising = int(255 * (h - section))
+    falling = 255 - rising
+    return [
+        (255, rising, 0),    # red -> yellow
+        (falling, 255, 0),   # yellow -> green
+        (0, 255, rising),    # green -> cyan
+        (0, falling, 255),   # cyan -> blue
+        (rising, 0, 255),    # blue -> purple
+        (255, 0, falling),   # purple -> red
+    ][section]
 
 
 def press_button(note):
@@ -114,6 +135,8 @@ smoothed = None
 last_value = -1
 hand_present = False
 last_seen = 0
+effect_index = 0
+flash_until = 0
 
 print("Ready.")
 
@@ -127,8 +150,12 @@ while True:
         note = NEXT_NOTE if steps > 0 else PREV_NOTE
         for _ in range(abs(steps)):
             press_button(note)
-        print("Effect", "next" if steps > 0 else "previous")
+        effect_index += steps
+        flash_until = now + FLASH_TIME
+        print("Effect", "next" if steps > 0 else "previous", "| color", effect_index % NUM_EFFECTS)
         last_position = position
+
+    color = wheel_color(effect_index)
 
     # ---- 2. Read the hand distance ----
     try:
@@ -159,9 +186,9 @@ while True:
             if AUTO_ON_OFF:
                 switch_effect(True)
 
-        set_led(COLOR, 0.2 + 0.8 * value / 127)
+        set_led(color, 0.2 + 0.8 * value / 127)
 
-    # ---- 4. No hand: freeze the amount, dim the LED ----
+    # ---- 4. No hand: freeze the amount ----
     else:
         smoothed = None
         # Hand gone for long enough: switch the effect off
@@ -169,6 +196,9 @@ while True:
             hand_present = False
             if AUTO_ON_OFF:
                 switch_effect(False)
-        set_led(COLOR, IDLE_BRIGHTNESS)
+        # LED stays as it was during brief dropouts; once the effect is off,
+        # it's off (or flashes the new color after a dial click)
+        if not hand_present:
+            set_led(color, 1.0 if now < flash_until else IDLE_BRIGHTNESS)
 
     time.sleep(0.03)

@@ -2,8 +2,8 @@
 # Board: Raspberry Pi Pico running CircuitPython
 # Parts: HC-SR04 ultrasonic sensor, KY-040 rotary encoder, RGB LED module
 #
-# Turn the dial to choose an effect (LED color shows which one).
-# Move your hand over the sensor to control that effect's amount.
+# Turn the dial to step through FX1's effects in the DJ software.
+# Move your hand over the sensor to control the effect's amount.
 # Bring your hand in and the effect switches on; pull it away and it switches
 # off, remembering the amount you left it at.
 #
@@ -47,13 +47,13 @@ from adafruit_midi.note_off import NoteOff
 import adafruit_hcsr04
 
 # ---------------- SETTINGS ----------------
-# Each effect: (name, MIDI knob number, on/off note, LED color as (R, G, B) 0-255)
-EFFECTS = [
-    ("Filter",  20, 60, (255, 0, 0)),     # red
-    ("Echo",    21, 61, (0, 255, 0)),     # green
-    ("Reverb",  22, 62, (0, 0, 255)),     # blue
-    ("Flanger", 23, 63, (255, 0, 255)),   # purple
-]
+# MIDI messages (map these in rekordbox):
+DEPTH_CC = 20       # hand height  -> FX1 Level/Depth  (B0 14)
+ON_OFF_NOTE = 60    # hand in/out  -> FX1 ON           (90 3C)
+NEXT_NOTE = 70      # dial right   -> FX1 Select Next  (90 46)
+PREV_NOTE = 71      # dial left    -> FX1 Select Prev  (90 47)
+
+COLOR = (0, 255, 255)   # LED color as (R, G, B) 0-255
 
 MIN_CM = 5        # hand this close (or closer) = value 0
 MAX_CM = 30       # hand this high = value 127; higher = "no hand"
@@ -93,44 +93,42 @@ def set_led(color, brightness):
     blue.duty_cycle = int(b / 255 * brightness * 65535)
 
 
-def switch_effect(name, note, on):
+def press_button(note):
+    """A short button press in the DJ software."""
+    midi.send(NoteOn(note, 127))
+    midi.send(NoteOff(note, 0))
+
+
+def switch_effect(on):
     """Press the effect's on/off button in the DJ software."""
     if SWITCH_STYLE == "hold":
-        midi.send(NoteOn(note, 127) if on else NoteOff(note, 0))
+        midi.send(NoteOn(ON_OFF_NOTE, 127) if on else NoteOff(ON_OFF_NOTE, 0))
     else:
-        midi.send(NoteOn(note, 127))
-        midi.send(NoteOff(note, 0))
-    print(name, "ON" if on else "OFF")
+        press_button(ON_OFF_NOTE)
+    print("FX", "ON" if on else "OFF")
 
 
 # ---- State ----
-effect_index = 0
 last_position = encoder.position
 smoothed = None
 last_value = -1
 hand_present = False
 last_seen = 0
 
-print("Ready. Effect:", EFFECTS[effect_index][0])
+print("Ready.")
 
 while True:
     now = time.monotonic()
 
-    # ---- 1. Read the dial: which effect are we controlling? ----
+    # ---- 1. Read the dial: one click = next/previous effect ----
     position = encoder.position
     if position != last_position:
-        # Switch the old effect off before moving to the next one
-        if AUTO_ON_OFF and hand_present:
-            old_name, _, old_note, _ = EFFECTS[effect_index]
-            switch_effect(old_name, old_note, False)
-        hand_present = False
-        effect_index = position % len(EFFECTS)
+        steps = position - last_position
+        note = NEXT_NOTE if steps > 0 else PREV_NOTE
+        for _ in range(abs(steps)):
+            press_button(note)
+        print("Effect", "next" if steps > 0 else "previous")
         last_position = position
-        smoothed = None
-        last_value = -1
-        print("Effect:", EFFECTS[effect_index][0])
-
-    name, cc_number, note, color = EFFECTS[effect_index]
 
     # ---- 2. Read the hand distance ----
     try:
@@ -150,8 +148,8 @@ while True:
         value = int((smoothed - MIN_CM) / (MAX_CM - MIN_CM) * 127)
 
         if value != last_value:
-            midi.send(ControlChange(cc_number, value))
-            print(name, "| distance:", round(distance, 1), "cm -> value:", value)
+            midi.send(ControlChange(DEPTH_CC, value))
+            print("distance:", round(distance, 1), "cm -> value:", value)
             last_value = value
 
         # Hand just arrived: switch the effect on (after setting its amount)
@@ -159,9 +157,9 @@ while True:
         if not hand_present:
             hand_present = True
             if AUTO_ON_OFF:
-                switch_effect(name, note, True)
+                switch_effect(True)
 
-        set_led(color, 0.2 + 0.8 * value / 127)
+        set_led(COLOR, 0.2 + 0.8 * value / 127)
 
     # ---- 4. No hand: freeze the amount, dim the LED ----
     else:
@@ -170,7 +168,7 @@ while True:
         if hand_present and now - last_seen > LEAVE_DELAY:
             hand_present = False
             if AUTO_ON_OFF:
-                switch_effect(name, note, False)
-        set_led(color, IDLE_BRIGHTNESS)
+                switch_effect(False)
+        set_led(COLOR, IDLE_BRIGHTNESS)
 
     time.sleep(0.03)

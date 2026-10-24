@@ -21,3 +21,6 @@ desktop.ini
 
 # Local AI assistant notes
 CLAUDE.md
+
+# rekordbox MIDI mapping export
+*.csv

@@ -4,7 +4,8 @@
 #
 # Turn the dial to choose an effect (LED color shows which one).
 # Move your hand over the sensor to control that effect's amount.
-# Pull your hand away and the effect stays where you left it.
+# Bring your hand in and the effect switches on; pull it away and it switches
+# off, remembering the amount you left it at.
 #
 # ---------------- WIRING ----------------
 # HC-SR04 ultrasonic (sensor facing UP):
@@ -41,21 +42,33 @@ import rotaryio
 import usb_midi
 import adafruit_midi
 from adafruit_midi.control_change import ControlChange
+from adafruit_midi.note_on import NoteOn
+from adafruit_midi.note_off import NoteOff
 import adafruit_hcsr04
 
 # ---------------- SETTINGS ----------------
-# Each effect: (name, MIDI knob number, LED color as (R, G, B) 0-255)
+# Each effect: (name, MIDI knob number, on/off note, LED color as (R, G, B) 0-255)
 EFFECTS = [
-    ("Filter",  20, (255, 0, 0)),     # red
-    ("Echo",    21, (0, 255, 0)),     # green
-    ("Reverb",  22, (0, 0, 255)),     # blue
-    ("Flanger", 23, (255, 0, 255)),   # purple
+    ("Filter",  20, 60, (255, 0, 0)),     # red
+    ("Echo",    21, 61, (0, 255, 0)),     # green
+    ("Reverb",  22, 62, (0, 0, 255)),     # blue
+    ("Flanger", 23, 63, (255, 0, 255)),   # purple
 ]
 
 MIN_CM = 5        # hand this close (or closer) = value 0
-MAX_CM = 40       # hand this high = value 127; higher = "no hand"
+MAX_CM = 30       # hand this high = value 127; higher = "no hand"
+                  # (kept below ~35 so nearby people/screens don't count as a hand)
 SMOOTHING = 0.6   # 0 = jumpy, closer to 1 = smoother but slower
 IDLE_BRIGHTNESS = 0.15   # LED brightness when no hand is present
+
+# Hand enters range = effect switches on, hand leaves = effect switches off.
+AUTO_ON_OFF = True
+# "tap":  a short button press when the hand enters and another when it leaves
+#         (for an FX ON button that toggles on each press)
+# "hold": button held down while the hand is in range
+#         (use this if "tap" turns the effect on and straight back off)
+SWITCH_STYLE = "tap"
+LEAVE_DELAY = 0.25  # seconds without a hand before switching off (ignores brief dropouts)
 # ------------------------------------------
 
 # ---- Set up hardware ----
@@ -80,25 +93,44 @@ def set_led(color, brightness):
     blue.duty_cycle = int(b / 255 * brightness * 65535)
 
 
+def switch_effect(name, note, on):
+    """Press the effect's on/off button in the DJ software."""
+    if SWITCH_STYLE == "hold":
+        midi.send(NoteOn(note, 127) if on else NoteOff(note, 0))
+    else:
+        midi.send(NoteOn(note, 127))
+        midi.send(NoteOff(note, 0))
+    print(name, "ON" if on else "OFF")
+
+
 # ---- State ----
 effect_index = 0
 last_position = encoder.position
 smoothed = None
 last_value = -1
+hand_present = False
+last_seen = 0
 
 print("Ready. Effect:", EFFECTS[effect_index][0])
 
 while True:
+    now = time.monotonic()
+
     # ---- 1. Read the dial: which effect are we controlling? ----
     position = encoder.position
     if position != last_position:
+        # Switch the old effect off before moving to the next one
+        if AUTO_ON_OFF and hand_present:
+            old_name, _, old_note, _ = EFFECTS[effect_index]
+            switch_effect(old_name, old_note, False)
+        hand_present = False
         effect_index = position % len(EFFECTS)
         last_position = position
         smoothed = None
         last_value = -1
         print("Effect:", EFFECTS[effect_index][0])
 
-    name, cc_number, color = EFFECTS[effect_index]
+    name, cc_number, note, color = EFFECTS[effect_index]
 
     # ---- 2. Read the hand distance ----
     try:
@@ -122,11 +154,23 @@ while True:
             print(name, "| distance:", round(distance, 1), "cm -> value:", value)
             last_value = value
 
+        # Hand just arrived: switch the effect on (after setting its amount)
+        last_seen = now
+        if not hand_present:
+            hand_present = True
+            if AUTO_ON_OFF:
+                switch_effect(name, note, True)
+
         set_led(color, 0.2 + 0.8 * value / 127)
 
-    # ---- 4. No hand: freeze the effect, dim the LED ----
+    # ---- 4. No hand: freeze the amount, dim the LED ----
     else:
         smoothed = None
+        # Hand gone for long enough: switch the effect off
+        if hand_present and now - last_seen > LEAVE_DELAY:
+            hand_present = False
+            if AUTO_ON_OFF:
+                switch_effect(name, note, False)
         set_led(color, IDLE_BRIGHTNESS)
 
     time.sleep(0.03)

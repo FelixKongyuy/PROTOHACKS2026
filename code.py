@@ -52,8 +52,9 @@ EFFECTS = [
     ("Flanger", 23, (255, 0, 255)),   # purple
 ]
 
-MIN_CM = 5        # hand this close (or closer) = value 0
-MAX_CM = 40       # hand this high = value 127; higher = "no hand"
+# Tuned to this sensor's readings: no hand reads ~3.5-3.9, a hand reads ~1-3
+MIN_CM = 1.0      # hand this close (or closer) = value 0
+MAX_CM = 3.3      # hand this high = value 127; higher = "no hand"
 SMOOTHING = 0.6   # 0 = jumpy, closer to 1 = smoother but slower
 IDLE_BRIGHTNESS = 0.15   # LED brightness when no hand is present
 # ------------------------------------------
